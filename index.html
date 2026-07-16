@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Circuit Typist</title>
 <style>
   :root{
@@ -37,6 +37,25 @@
     inset:0;
     display:flex;
     flex-direction:column;
+    touch-action:manipulation;
+    -webkit-user-select:none;
+    user-select:none;
+  }
+
+  #capture{
+    position:absolute;
+    top:0; left:0;
+    width:1px;
+    height:1px;
+    padding:0;
+    border:0;
+    margin:0;
+    opacity:0;
+    font-size:16px; /* prevents iOS Safari from auto-zooming on focus */
+    background:transparent;
+    color:transparent;
+    caret-color:transparent;
+    pointer-events:none;
   }
 
   #bg-grid{
@@ -276,6 +295,8 @@
 <div id="app">
   <div id="bg-grid"></div>
 
+  <input id="capture" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="text" aria-hidden="true" tabindex="-1">
+
   <header id="hud">
     <div class="stat"><span class="stat-label">WPM</span><span class="stat-value" id="stat-wpm">0</span></div>
     <div class="stat"><span class="stat-label">Accuracy</span><span class="stat-value" id="stat-acc">100%</span></div>
@@ -332,6 +353,8 @@
   ];
 
   var els = {
+    app: document.getElementById('app'),
+    capture: document.getElementById('capture'),
     hud: document.getElementById('hud'),
     wordsLayer: document.getElementById('words-layer'),
     playfield: document.getElementById('playfield'),
@@ -518,29 +541,22 @@
     }
   }
 
-  function onKeyDown(e){
+  function processBackspace(){
     if(!state || !state.playing) return;
-    if(e.metaKey || e.ctrlKey || e.altKey) return;
-
-    var key = e.key;
-
-    if(key === 'Backspace'){
-      e.preventDefault();
-      if(state.activeTarget && state.buffer.length > 0){
-        state.buffer = state.buffer.slice(0, -1);
-        state.activeTarget.typed = state.buffer.length;
-        renderWordText(state.activeTarget);
-        if(state.buffer.length === 0){
-          state.activeTarget.el.classList.remove('locked');
-          state.activeTarget = null;
-        }
+    if(state.activeTarget && state.buffer.length > 0){
+      state.buffer = state.buffer.slice(0, -1);
+      state.activeTarget.typed = state.buffer.length;
+      renderWordText(state.activeTarget);
+      if(state.buffer.length === 0){
+        state.activeTarget.el.classList.remove('locked');
+        state.activeTarget = null;
       }
-      return;
     }
+  }
 
-    if(key.length !== 1 || !/[a-zA-Z]/.test(key)) return;
-    var ch = key.toLowerCase();
-    e.preventDefault();
+  function processChar(ch){
+    if(!state || !state.playing) return;
+    if(!/[a-z]/.test(ch)) return;
 
     state.totalKeystrokes++;
 
@@ -557,7 +573,6 @@
         }
       } else {
         state.combo = 0;
-        w.el.classList.add('miss-flash');
         shakeTile(w);
       }
       return;
@@ -639,6 +654,8 @@
   }
 
   function startGame(){
+    els.capture.value = "";
+    els.capture.focus({ preventScroll: true });
     els.wordsLayer.innerHTML = "";
     state = freshState();
     buildLives();
@@ -674,14 +691,46 @@
   els.btnStart.addEventListener('click', startGame);
   els.btnAgain.addEventListener('click', startGame);
 
+  // Physical keyboards: while playing, #capture stays focused, so typed
+  // characters reach it as 'input' events (handled below) via the browser's
+  // normal text-insertion behavior. This listener only needs to start the
+  // game from the start screen.
   window.addEventListener('keydown', function(e){
     if(!state || !state.playing){
       if(!els.screenStart.classList.contains('hidden') && e.key.length === 1 && /[a-zA-Z]/.test(e.key)){
         startGame();
       }
+    }
+  });
+
+  // Mobile / on-screen keyboards: the hidden #capture input stays focused
+  // during play so tapping Start opens the virtual keyboard, and typing
+  // (including autocorrect/predictive inserts) is read through 'input'
+  // rather than 'keydown', which mobile keyboards don't fire reliably.
+  els.capture.addEventListener('input', function(e){
+    if(!state || !state.playing){ els.capture.value = ""; return; }
+    if(e.inputType && e.inputType.indexOf('delete') === 0){
+      processBackspace();
+      els.capture.value = "";
       return;
     }
-    onKeyDown(e);
+    var val = els.capture.value;
+    for(var i = 0; i < val.length; i++){
+      var c = val[i].toLowerCase();
+      if(/[a-z]/.test(c)) processChar(c);
+    }
+    els.capture.value = "";
+  });
+
+  els.capture.addEventListener('keydown', function(e){
+    if(state && state.playing && e.key === 'Backspace'){
+      e.preventDefault();
+      processBackspace();
+    }
+  });
+
+  els.app.addEventListener('click', function(){
+    if(state && state.playing) els.capture.focus({ preventScroll: true });
   });
 
 })();
