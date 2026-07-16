@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circuit Typist</title>
+<style>
+  :root{
+    --bg:#100f18;
+    --bg2:#181726;
+    --panel:#1d1c2c;
+    --panel-edge:#0c0b14;
+    --trace: rgba(255,180,84,0.055);
+    --ink:#f1ece1;
+    --muted:#8b899f;
+    --accent:#ffb454;
+    --accent-dim:#8a6a3a;
+    --accent2:#6ee7d8;
+    --danger:#ff5d6a;
+    --mono: ui-monospace, "Cascadia Code", "Consolas", "SFMono-Regular", "Roboto Mono", monospace;
+    --sans: ui-sans-serif, "Segoe UI", system-ui, -apple-system, sans-serif;
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; margin:0; overflow:hidden; }
+  body{
+    background:
+      radial-gradient(ellipse 120% 90% at 50% -10%, #221f34 0%, var(--bg) 55%),
+      var(--bg);
+    color:var(--ink);
+    font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  #app{
+    position:fixed;
+    inset:0;
+    display:flex;
+    flex-direction:column;
+  }
+
+  #bg-grid{
+    position:absolute;
+    inset:0;
+    pointer-events:none;
+    background-image:
+      repeating-linear-gradient(0deg, var(--trace) 0 1px, transparent 1px 88px),
+      repeating-linear-gradient(90deg, var(--trace) 0 1px, transparent 1px 88px);
+    opacity:0.9;
+  }
+
+  /* ---------- HUD ---------- */
+  #hud{
+    position:relative;
+    z-index:5;
+    display:flex;
+    align-items:center;
+    gap:clamp(10px,2vw,28px);
+    padding:14px clamp(14px,3vw,30px);
+    background:linear-gradient(180deg, var(--panel), var(--bg2));
+    border-bottom:1px solid var(--panel-edge);
+    box-shadow:0 8px 24px -12px rgba(0,0,0,0.6);
+    flex-wrap:wrap;
+  }
+  .stat{
+    display:flex;
+    flex-direction:column;
+    line-height:1;
+    min-width:64px;
+  }
+  .stat-label{
+    font-size:10px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin-bottom:5px;
+  }
+  .stat-value{
+    font-family:var(--mono);
+    font-variant-numeric:tabular-nums;
+    font-size:clamp(18px,2.4vw,24px);
+    font-weight:600;
+    color:var(--accent);
+    text-shadow:0 0 14px rgba(255,180,84,0.35);
+  }
+  .stat-value.teal{ color:var(--accent2); text-shadow:0 0 14px rgba(110,231,216,0.4); }
+  .stat-value.plain{ color:var(--ink); text-shadow:none; }
+
+  #lives{
+    display:flex;
+    gap:6px;
+    margin-left:auto;
+  }
+  .life-chip{
+    width:18px;
+    height:14px;
+    border-radius:3px;
+    background:var(--accent);
+    box-shadow: inset 0 -2px 0 rgba(0,0,0,0.35), 0 0 8px rgba(255,180,84,0.5);
+    transition:transform .25s ease, opacity .25s ease, background .25s ease;
+  }
+  .life-chip.lost{
+    background:var(--panel-edge);
+    box-shadow:none;
+    transform:scale(0.6) rotate(12deg);
+    opacity:0.35;
+  }
+
+  /* ---------- Playfield ---------- */
+  #playfield{
+    position:relative;
+    flex:1;
+    overflow:hidden;
+  }
+  #words-layer{
+    position:absolute;
+    inset:0;
+  }
+  #floor-line{
+    position:absolute;
+    left:0; right:0; bottom:56px;
+    height:1px;
+    background:linear-gradient(90deg, transparent, var(--accent-dim), transparent);
+    opacity:0.5;
+  }
+  #floor-bezel{
+    position:absolute;
+    left:0; right:0; bottom:0; height:56px;
+    background:linear-gradient(180deg, var(--bg2), var(--panel-edge));
+    border-top:1px solid var(--panel-edge);
+  }
+
+  .word-tile{
+    position:absolute;
+    top:0; left:0;
+    transform:translate(0,0);
+    padding:8px 14px;
+    border-radius:8px;
+    background:linear-gradient(180deg, var(--panel), #17162252);
+    background-color:var(--panel);
+    border:1px solid var(--panel-edge);
+    border-bottom:3px solid var(--panel-edge);
+    font-family:var(--mono);
+    font-size:clamp(16px,2vw,20px);
+    font-weight:600;
+    letter-spacing:0.02em;
+    white-space:nowrap;
+    will-change:transform;
+    box-shadow:0 6px 16px -8px rgba(0,0,0,0.6);
+  }
+  .word-tile .matched{
+    color:var(--accent);
+    text-shadow:0 0 10px rgba(255,180,84,0.55);
+  }
+  .word-tile .remaining{ color:var(--muted); }
+  .word-tile.locked{ border-color:var(--accent-dim); }
+  .word-tile.pop{
+    animation:pop .28s ease forwards;
+  }
+  .word-tile.miss{
+    animation:miss .32s ease forwards;
+  }
+  @keyframes pop{
+    to{ transform:translate(0,var(--y)) scale(1.35); opacity:0; }
+  }
+  @keyframes miss{
+    0%{ transform:translate(0,var(--y)); }
+    30%{ transform:translate(-6px,var(--y)); }
+    60%{ transform:translate(6px,var(--y)); }
+    to{ transform:translate(0,var(--y)) translateY(6px); opacity:0; }
+  }
+
+  #shake-flash{
+    position:absolute;
+    inset:0;
+    background:radial-gradient(ellipse at 50% 100%, rgba(255,93,106,0.18), transparent 60%);
+    opacity:0;
+    pointer-events:none;
+    transition:opacity .35s ease;
+  }
+  #shake-flash.on{ opacity:1; }
+
+  /* ---------- Screens ---------- */
+  .screen{
+    position:absolute;
+    inset:0;
+    z-index:10;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    background:rgba(16,15,24,0.86);
+    backdrop-filter: blur(3px);
+  }
+  .screen.hidden{ display:none; }
+  .panel{
+    max-width:560px;
+    width:min(88vw,560px);
+    text-align:center;
+    padding:clamp(28px,5vw,44px);
+    background:var(--panel);
+    border:1px solid var(--panel-edge);
+    border-radius:16px;
+    box-shadow:0 30px 60px -20px rgba(0,0,0,0.7);
+  }
+  .eyebrow{
+    font-size:11px;
+    letter-spacing:0.22em;
+    text-transform:uppercase;
+    color:var(--accent2);
+    margin:0 0 10px;
+  }
+  h1{
+    font-family:var(--mono);
+    font-size:clamp(28px,5vw,40px);
+    margin:0 0 14px;
+    text-wrap:balance;
+    color:var(--ink);
+  }
+  h1 span{ color:var(--accent); }
+  .lede{
+    color:var(--muted);
+    font-size:15px;
+    line-height:1.6;
+    margin:0 0 26px;
+  }
+  .key-hint{
+    display:inline-block;
+    font-family:var(--mono);
+    background:var(--bg2);
+    border:1px solid var(--panel-edge);
+    border-bottom:2px solid var(--panel-edge);
+    border-radius:5px;
+    padding:2px 8px;
+    color:var(--accent);
+    font-size:13px;
+  }
+  .cta{
+    font-family:var(--mono);
+    font-size:15px;
+    letter-spacing:0.06em;
+    color:var(--bg);
+    background:var(--accent);
+    border:none;
+    border-bottom:3px solid var(--accent-dim);
+    border-radius:9px;
+    padding:13px 26px;
+    cursor:pointer;
+    box-shadow:0 0 22px rgba(255,180,84,0.3);
+  }
+  .cta:active{ transform:translateY(2px); border-bottom-width:1px; }
+  .cta:focus-visible{ outline:2px solid var(--accent2); outline-offset:3px; }
+
+  .results-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:14px;
+    margin:22px 0 28px;
+    text-align:left;
+  }
+  .result-cell{
+    background:var(--bg2);
+    border:1px solid var(--panel-edge);
+    border-radius:10px;
+    padding:12px 14px;
+  }
+  .result-cell .stat-label{ margin-bottom:4px; }
+  .result-cell .stat-value{ font-size:22px; }
+
+  @media (prefers-reduced-motion: reduce){
+    .word-tile, .life-chip, #shake-flash{ transition:none !important; animation:none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="bg-grid"></div>
+
+  <header id="hud">
+    <div class="stat"><span class="stat-label">WPM</span><span class="stat-value" id="stat-wpm">0</span></div>
+    <div class="stat"><span class="stat-label">Accuracy</span><span class="stat-value" id="stat-acc">100%</span></div>
+    <div class="stat"><span class="stat-label">Score</span><span class="stat-value plain" id="stat-score">0</span></div>
+    <div class="stat"><span class="stat-label">Combo</span><span class="stat-value teal" id="stat-combo">0</span></div>
+    <div class="stat"><span class="stat-label">Level</span><span class="stat-value plain" id="stat-level">1</span></div>
+    <div id="lives"></div>
+  </header>
+
+  <main id="playfield">
+    <div id="bg-grid-inner"></div>
+    <div id="words-layer"></div>
+    <div id="shake-flash"></div>
+    <div id="floor-line"></div>
+    <div id="floor-bezel"></div>
+  </main>
+
+  <section class="screen" id="screen-start">
+    <div class="panel">
+      <p class="eyebrow">Circuit Typist</p>
+      <h1>Keep the <span>signal</span> alive</h1>
+      <p class="lede">Words drop down the board. Type each one before it reaches the floor. Speed and word length ramp up as your streak grows — accuracy and WPM are tracked live.</p>
+      <p class="lede">Press <span class="key-hint">any letter key</span> or tap the button to boot up.</p>
+      <button class="cta" id="btn-start">Start Typing →</button>
+    </div>
+  </section>
+
+  <section class="screen hidden" id="screen-gameover">
+    <div class="panel">
+      <p class="eyebrow">Signal Lost</p>
+      <h1 id="go-title">Board overloaded</h1>
+      <div class="results-grid">
+        <div class="result-cell"><span class="stat-label">Final WPM</span><span class="stat-value" id="go-wpm">0</span></div>
+        <div class="result-cell"><span class="stat-label">Accuracy</span><span class="stat-value" id="go-acc">100%</span></div>
+        <div class="result-cell"><span class="stat-label">Words cleared</span><span class="stat-value plain" id="go-words">0</span></div>
+        <div class="result-cell"><span class="stat-label">Best combo</span><span class="stat-value teal" id="go-combo">0</span></div>
+        <div class="result-cell"><span class="stat-label">Score</span><span class="stat-value plain" id="go-score">0</span></div>
+        <div class="result-cell"><span class="stat-label">Level reached</span><span class="stat-value plain" id="go-level">1</span></div>
+      </div>
+      <button class="cta" id="btn-again">Play Again</button>
+    </div>
+  </section>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var TIERS = [
+    ["cat","dog","run","key","bit","top","fan","red","sun","map","code","wire","byte","pulse","logic","board","input","chip","pixel","cache"],
+    ["signal","output","memory","kernel","switch","binary","router","socket","buffer","thread","script","engine","matrix","vector","stream","cursor"],
+    ["compiler","function","variable","hardware","protocol","firmware","frequency","algorithm","interface","processor","bandwidth","recursive","debugging","concurrent","framework"],
+    ["synchronize","architecture","optimization","asynchronous","microcontroller","multithreaded","virtualization","authentication","cryptographic","initialization"]
+  ];
+
+  var els = {
+    hud: document.getElementById('hud'),
+    wordsLayer: document.getElementById('words-layer'),
+    playfield: document.getElementById('playfield'),
+    lives: document.getElementById('lives'),
+    flash: document.getElementById('shake-flash'),
+    statWpm: document.getElementById('stat-wpm'),
+    statAcc: document.getElementById('stat-acc'),
+    statScore: document.getElementById('stat-score'),
+    statCombo: document.getElementById('stat-combo'),
+    statLevel: document.getElementById('stat-level'),
+    screenStart: document.getElementById('screen-start'),
+    screenOver: document.getElementById('screen-gameover'),
+    btnStart: document.getElementById('btn-start'),
+    btnAgain: document.getElementById('btn-again'),
+    goWpm: document.getElementById('go-wpm'),
+    goAcc: document.getElementById('go-acc'),
+    goWords: document.getElementById('go-words'),
+    goCombo: document.getElementById('go-combo'),
+    goScore: document.getElementById('go-score'),
+    goLevel: document.getElementById('go-level'),
+    goTitle: document.getElementById('go-title')
+  };
+
+  var MAX_LIVES = 5;
+
+  var state = null;
+
+  function freshState(){
+    return {
+      playing:false,
+      startTime:0,
+      lastSpawn:0,
+      lastLevelUp:0,
+      level:1,
+      lives:MAX_LIVES,
+      score:0,
+      combo:0,
+      maxCombo:0,
+      wordsCleared:0,
+      correctChars:0,
+      correctKeystrokes:0,
+      totalKeystrokes:0,
+      buffer:"",
+      activeTarget:null,
+      words:[],
+      nextId:1,
+      rafId:null
+    };
+  }
+
+  function buildLives(){
+    els.lives.innerHTML = "";
+    for(var i=0;i<MAX_LIVES;i++){
+      var chip = document.createElement('div');
+      chip.className = 'life-chip';
+      chip.dataset.idx = i;
+      els.lives.appendChild(chip);
+    }
+  }
+
+  function updateLivesUI(){
+    var chips = els.lives.children;
+    for(var i=0;i<chips.length;i++){
+      chips[i].classList.toggle('lost', i >= state.lives);
+    }
+  }
+
+  function tierPoolForLevel(level){
+    // widen pool toward harder tiers as level rises
+    var pool = [];
+    var maxTier = Math.min(TIERS.length - 1, Math.floor((level-1) / 2));
+    for(var t=0; t<=maxTier; t++){
+      var weight = (t === maxTier) ? 3 : 1;
+      for(var w=0; w<weight; w++) pool.push(t);
+    }
+    return pool;
+  }
+
+  function pickWord(level){
+    var pool = tierPoolForLevel(level);
+    var tier = pool[Math.floor(Math.random()*pool.length)];
+    var list = TIERS[tier];
+    return list[Math.floor(Math.random()*list.length)];
+  }
+
+  function fallSpeed(level){
+    return 34 + level * 7; // px/sec
+  }
+  function spawnInterval(level){
+    return Math.max(650, 1900 - level * 110);
+  }
+
+  function spawnWord(){
+    var text = pickWord(state.level);
+    var fieldW = els.playfield.clientWidth;
+    var tileEstW = Math.max(80, text.length * 17 + 32);
+    var x = 12 + Math.random() * Math.max(1, fieldW - tileEstW - 24);
+
+    var el = document.createElement('div');
+    el.className = 'word-tile';
+    var rem = document.createElement('span');
+    rem.className = 'remaining';
+    rem.textContent = text;
+    el.appendChild(rem);
+    el.style.transform = 'translate(' + x + 'px,-40px)';
+    el.style.setProperty('--y', '-40px');
+    els.wordsLayer.appendChild(el);
+
+    state.words.push({
+      id: state.nextId++,
+      text: text,
+      x: x,
+      y: -40,
+      speed: fallSpeed(state.level),
+      el: el,
+      remEl: rem,
+      matEl: null,
+      typed: 0
+    });
+  }
+
+  function renderWordText(word){
+    var t = word.text;
+    var matched = t.slice(0, word.typed);
+    var rest = t.slice(word.typed);
+    word.el.innerHTML = "";
+    if(matched){
+      var m = document.createElement('span');
+      m.className = 'matched';
+      m.textContent = matched;
+      word.el.appendChild(m);
+    }
+    var r = document.createElement('span');
+    r.className = 'remaining';
+    r.textContent = rest;
+    word.el.appendChild(r);
+  }
+
+  function clearWord(word, x, y){
+    word.el.style.setProperty('--y', y + 'px');
+    word.el.classList.add('pop');
+    setTimeout(function(){ if(word.el.parentNode) word.el.parentNode.removeChild(word.el); }, 300);
+  }
+
+  function missWord(word, x, y){
+    word.el.style.setProperty('--y', y + 'px');
+    word.el.classList.add('miss');
+    setTimeout(function(){ if(word.el.parentNode) word.el.parentNode.removeChild(word.el); }, 340);
+    flashDanger();
+  }
+
+  function flashDanger(){
+    els.flash.classList.add('on');
+    setTimeout(function(){ els.flash.classList.remove('on'); }, 260);
+  }
+
+  function removeFromWords(word){
+    var idx = state.words.indexOf(word);
+    if(idx >= 0) state.words.splice(idx, 1);
+    if(state.activeTarget === word){
+      state.activeTarget = null;
+      state.buffer = "";
+    }
+  }
+
+  function handleSuccessWord(word){
+    state.correctChars += word.text.length;
+    state.wordsCleared++;
+    state.combo++;
+    if(state.combo > state.maxCombo) state.maxCombo = state.combo;
+    state.score += word.text.length * 10 + state.combo * 2;
+    clearWord(word, word.x, word.y);
+    removeFromWords(word);
+  }
+
+  function handleLifeLoss(word){
+    missWord(word, word.x, word.y);
+    removeFromWords(word);
+    state.combo = 0;
+    state.lives--;
+    updateLivesUI();
+    if(state.lives <= 0){
+      endGame();
+    }
+  }
+
+  function onKeyDown(e){
+    if(!state || !state.playing) return;
+    if(e.metaKey || e.ctrlKey || e.altKey) return;
+
+    var key = e.key;
+
+    if(key === 'Backspace'){
+      e.preventDefault();
+      if(state.activeTarget && state.buffer.length > 0){
+        state.buffer = state.buffer.slice(0, -1);
+        state.activeTarget.typed = state.buffer.length;
+        renderWordText(state.activeTarget);
+        if(state.buffer.length === 0){
+          state.activeTarget.el.classList.remove('locked');
+          state.activeTarget = null;
+        }
+      }
+      return;
+    }
+
+    if(key.length !== 1 || !/[a-zA-Z]/.test(key)) return;
+    var ch = key.toLowerCase();
+    e.preventDefault();
+
+    state.totalKeystrokes++;
+
+    if(state.activeTarget){
+      var w = state.activeTarget;
+      if(w.text[state.buffer.length] === ch){
+        state.buffer += ch;
+        w.typed = state.buffer.length;
+        state.correctKeystrokes++;
+        renderWordText(w);
+        if(state.buffer.length === w.text.length){
+          handleSuccessWord(w);
+          state.buffer = "";
+        }
+      } else {
+        state.combo = 0;
+        w.el.classList.add('miss-flash');
+        shakeTile(w);
+      }
+      return;
+    }
+
+    // no locked target: find best matching word starting with ch
+    var candidates = state.words.filter(function(w){ return w.text[0] === ch; });
+    if(candidates.length === 0){
+      state.combo = 0;
+      return;
+    }
+    candidates.sort(function(a,b){ return b.y - a.y; });
+    var target = candidates[0];
+    target.el.classList.add('locked');
+    state.activeTarget = target;
+    state.buffer = ch;
+    target.typed = 1;
+    state.correctKeystrokes++;
+    renderWordText(target);
+    if(target.text.length === 1){
+      handleSuccessWord(target);
+      state.buffer = "";
+    }
+  }
+
+  function shakeTile(w){
+    w.el.animate([
+      { transform: 'translate(0,' + w.y + 'px)' },
+      { transform: 'translate(-5px,' + w.y + 'px)' },
+      { transform: 'translate(5px,' + w.y + 'px)' },
+      { transform: 'translate(0,' + w.y + 'px)' }
+    ], { duration: 180 });
+  }
+
+  function fmtPct(n){ return Math.round(n) + '%'; }
+
+  function updateHUD(){
+    var elapsedMin = Math.max(0.0167, (performance.now() - state.startTime) / 60000);
+    var wpm = Math.round((state.correctChars / 5) / elapsedMin);
+    var acc = state.totalKeystrokes === 0 ? 100 : (state.correctKeystrokes / state.totalKeystrokes) * 100;
+    els.statWpm.textContent = wpm;
+    els.statAcc.textContent = fmtPct(acc);
+    els.statScore.textContent = state.score;
+    els.statCombo.textContent = state.combo;
+    els.statLevel.textContent = state.level;
+    return { wpm: wpm, acc: acc };
+  }
+
+  function loop(ts){
+    if(!state.playing) return;
+    if(!state.lastTs) state.lastTs = ts;
+    var dt = (ts - state.lastTs) / 1000;
+    state.lastTs = ts;
+
+    var elapsed = ts - state.startTime;
+    var newLevel = 1 + Math.floor(elapsed / 15000);
+    if(newLevel !== state.level){
+      state.level = newLevel;
+    }
+
+    if(ts - state.lastSpawn > spawnInterval(state.level)){
+      spawnWord();
+      state.lastSpawn = ts;
+    }
+
+    var floorY = els.playfield.clientHeight - 56;
+    for(var i = state.words.length - 1; i >= 0; i--){
+      var w = state.words[i];
+      w.y += w.speed * dt;
+      w.el.style.transform = 'translate(' + w.x + 'px,' + w.y + 'px)';
+      w.el.style.setProperty('--y', w.y + 'px');
+      if(w.y >= floorY){
+        handleLifeLoss(w);
+      }
+    }
+
+    updateHUD();
+    state.rafId = requestAnimationFrame(loop);
+  }
+
+  function startGame(){
+    els.wordsLayer.innerHTML = "";
+    state = freshState();
+    buildLives();
+    updateLivesUI();
+    els.screenStart.classList.add('hidden');
+    els.screenOver.classList.add('hidden');
+    state.playing = true;
+    state.startTime = performance.now();
+    state.lastSpawn = state.startTime - 10000; // spawn first word almost immediately
+    state.lastTs = null;
+    spawnWord();
+    state.lastSpawn = state.startTime;
+    updateHUD();
+    state.rafId = requestAnimationFrame(loop);
+  }
+
+  function endGame(){
+    state.playing = false;
+    if(state.rafId) cancelAnimationFrame(state.rafId);
+    var final = updateHUD();
+    els.goWpm.textContent = final.wpm;
+    els.goAcc.textContent = fmtPct(final.acc);
+    els.goWords.textContent = state.wordsCleared;
+    els.goCombo.textContent = state.maxCombo;
+    els.goScore.textContent = state.score;
+    els.goLevel.textContent = state.level;
+    els.goTitle.textContent = state.wordsCleared >= 25 ? "Nice run — signal held strong" : "Board overloaded";
+    setTimeout(function(){
+      els.screenOver.classList.remove('hidden');
+    }, 260);
+  }
+
+  els.btnStart.addEventListener('click', startGame);
+  els.btnAgain.addEventListener('click', startGame);
+
+  window.addEventListener('keydown', function(e){
+    if(!state || !state.playing){
+      if(!els.screenStart.classList.contains('hidden') && e.key.length === 1 && /[a-zA-Z]/.test(e.key)){
+        startGame();
+      }
+      return;
+    }
+    onKeyDown(e);
+  });
+
+})();
+</script>
+</body>
+</html>
