@@ -4,7 +4,7 @@ A falling-words typing speed arcade game. Words drop down a circuit-board playfi
 
 ## Play
 
-Open [`index.html`](./index.html) in a browser, or enable GitHub Pages for this repo (Settings → Pages → Deploy from branch `main` / root) to play it at a public URL.
+**[Play it here](https://bluelabelcommerce-cell.github.io/typing-speed-game/)** — or open [`index.html`](./index.html) locally in a browser.
 
 ## How it works
 
